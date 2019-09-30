@@ -25,16 +25,16 @@ flags = tf.app.flags
 FLAGS = flags.FLAGS
 
 flags.DEFINE_string('model_path',None,'model path for the target model')
-flags.DEFINE_string('csv_file',None,'csv file for the audio files')
-flags.DEFINE_string('audio_path',None,'Path to the FSDKaggle2018 dataset')
+flags.DEFINE_string('train_csv_file',None,'csv file for the audio files')
+flags.DEFINE_string('train_audio_dir',None,'Path to the FSDKaggle2018 dataset')
 
 
 SAMPLE_RATE=44100
-def feature_extraction(clip,audio_path,hparams):
+def feature_extraction(clip,train_audio_dir,hparams):
     """
     Extract features from a wavfile
     """
-    clip_path = tf.string_join([audio_path,clip], separator=os.sep)
+    clip_path = tf.string_join([train_audio_dir,clip], separator=os.sep)
     clip_data = tf.read_file(clip_path)
     waveform,sr = tf_audio.decode_wav(clip_data)
     check_sr = tf.assert_equal(sr, SAMPLE_RATE)
@@ -74,14 +74,14 @@ def feature_extraction(clip,audio_path,hparams):
     return features
 
 
-def label_data(model_path,csv_file,audio_path):
+def label_data(model_path,train_csv_file,train_audio_dir):
     """
     Label the data using a particular model and save the softmax values.
     Generates one softmax values per file
     """
     
     sr=32000
-    df = pd.read_csv(csv_file)
+    df = pd.read_csv(train_csv_file)
     x,_ = utils_tf._load_dataset(cfg.to_dataset('training'))
     generator = utils.fit_scaler(x)
     file_names = df.iloc[:,0].values
@@ -101,7 +101,7 @@ def label_data(model_path,csv_file,audio_path):
         saver.restore(sess,model_path)
         print(len(file_names)) 
         for i in range(len(file_names)):
-            data,_ = utils_tf._preprocess_data(audio_path,file_names[i])
+            data,_ = utils_tf._preprocess_data(train_audio_dir,file_names[i])
             l = sess.run([model.get_probs()],feed_dict={pcm:data})
             l = np.squeeze(l)
             if(l.ndim !=1):
@@ -120,10 +120,10 @@ def label_data(model_path,csv_file,audio_path):
 
             
     return
-def get_data(csv_record,audio_path,hparams,label_index_table,label_data):
+def get_data(csv_record,train_audio_dir,hparams,label_index_table,label_data):
     [clip,temp,_,_,_] = tf.decode_csv(csv_record,record_defaults=[[''],[''],[''],[''],['']])
 
-    features = feature_extraction(clip,audio_path,hparams)
+    features = feature_extraction(clip,train_audio_dir,hparams)
     
     label_ind = label_index_table.lookup(clip)
     label_data = tf.convert_to_tensor(label_data)
@@ -133,32 +133,32 @@ def get_data(csv_record,audio_path,hparams,label_index_table,label_data):
     #label = np.ones(41)
     return features,labels
 
-def load_data(csv_file):
+def load_data(train_csv_file):
     label_data_table=tf.contrib.lookup.HashTable(tf.contrib.lookup.TextFileInitializer(
-            csv_file, tf.string, 0,tf.int64, tf.contrib.lookup.TextFileIndex.LINE_NUMBER, delimiter=","), -1)
+            train_csv_file, tf.string, 0,tf.int64, tf.contrib.lookup.TextFileIndex.LINE_NUMBER, delimiter=","), -1)
     return label_data_table
-def dataset_iterator(csv_file,audio_path,hparams):
+def dataset_iterator(train_csv_file,train_audio_dir,label_data_file,hparams):
     """
     Create an iterator for the training process
     """
-    label_index_table = load_data(csv_file)
-    label_data = np.load('labels.npy')
+    label_index_table = load_data(train_csv_file)
+    label_data = np.load(label_data_file)
     print(label_data.shape)
     num_classes=41
-    dataset = tf.data.TextLineDataset(csv_file).skip(1)
+    dataset = tf.data.TextLineDataset(train_csv_file).skip(1)
 
     dataset = dataset.shuffle(buffer_size=10000)
 
 
     dataset = dataset.map(map_func=functools.partial(get_data,
-                    audio_path=audio_path,
+                    train_audio_dir=train_audio_dir,
                     hparams=hparams,
                     label_index_table=label_index_table,
                     label_data=label_data))
     
     dataset = dataset.apply(tf.contrib.data.unbatch())
     dataset = dataset.shuffle(buffer_size=1000)
-    dataset = dataset.repeat(5)
+    dataset = dataset.repeat(2)
     dataset = dataset.batch(32)
 
     dataset = dataset.prefetch(10)
@@ -172,4 +172,4 @@ def dataset_iterator(csv_file,audio_path,hparams):
 
 
 if __name__=="__main__":
-    label_data(FLAGS.model_path,FLAGS.csv_file,FLAGS.audio_path)
+    label_data(FLAGS.model_path,FLAGS.train_csv_file,FLAGS.train_audio_dir)

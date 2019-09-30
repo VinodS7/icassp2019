@@ -1,22 +1,23 @@
 import tensorflow as tf
 import numpy as np
-from cleverhans.model import Modeli
+from cleverhans.model import Model
 
-import tf.contrib.slim as slim
+import tensorflow.contrib.slim as slim
 
 class BaselineCNN(Model):
-    def __init__(self,hparams):
+    def __init__(self,hparams,num_classes):
         self.hparams = hparams
+        self.num_classes = num_classes
         return
 
     def fprop(self,features):
-        self.hparams = hparams
+        hparams = self.hparams
         net = tf.expand_dims(features,axis=3)
         with slim.arg_scope([slim.conv2d,slim.fully_connected],
-                weights_initializer=tf.truncated_normal_initializer(sttdev=hparams.weights_init_stddev),
+                weights_initializer=tf.truncated_normal_initializer(stddev=hparams.weights_init_stddev),
                 biases_initializer=tf.zeros_initializer(),
                 activation_fn=tf.nn.relu,
-                trainable=training):
+                trainable=True):
        
             with slim.arg_scope([slim.conv2d],
                     stride=1, padding='SAME'),\
@@ -29,17 +30,18 @@ class BaselineCNN(Model):
                 net = tf.reduce_max(net,axis=[1,2],keepdims=True)
                 net = slim.flatten(net)
             
-            logits = slim.fully_connected(net,num_classes,activation_fn=None)
+            logits = slim.fully_connected(net,self.num_classes,activation_fn=None)
             prediction = tf.nn.softmax(logits)
-        return prediction
+        return {self.O_LOGITS: logits,
+                self.O_PROBS: prediction}
 
     def train(self,features,labels):
         hparams=self.hparams
-        global_step = tf.Variable(0,name='global_step',trainable=training,
+        global_step = tf.Variable(0,name='global_step',trainable=True,
                 collections=[tf.GraphKeys.GLOBAL_VARIABLES,
                     tf.GraphKeys.GLOBAL_STEP])
         
-        preds = self.fprop(features)
+        logits = self.get_logits(features)
         xent = tf.nn.softmax_cross_entropy_with_logits_v2(logits=logits,labels=labels)
         loss = tf.reduce_mean(xent)
         tf.summary.scalar('loss',loss)
