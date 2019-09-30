@@ -7,11 +7,14 @@ import numpy as np
 import tensorflow as tf
 import pandas as pd
 import pickle
+import functools
 
 import utils_tf
 import utils
 import config as cfg
 from cleverhans_wrapper import CleverHansModel
+from tensorflow.contrib.framework.python.ops import audio_ops as tf_audio
+from tensorflow.python import autograph as ag
 """
 1. Extract features from audio files that are given by an input csv file. 
 2. Create labels for training using the target model 
@@ -25,13 +28,15 @@ flags.DEFINE_string('model_path',None,'model path for the target model')
 flags.DEFINE_string('csv_file',None,'csv file for the audio files')
 flags.DEFINE_string('audio_path',None,'Path to the FSDKaggle2018 dataset')
 
+
+SAMPLE_RATE=44100
 def feature_extraction(clip,audio_path,hparams):
     """
     Extract features from a wavfile
     """
     clip_path = tf.string_join([audio_path,clip], separator=os.sep)
     clip_data = tf.read_file(clip_path)
-    waveform,sr = tf.contrib.framework.python.ops.devode_wav(clip_data)
+    waveform,sr = tf_audio.decode_wav(clip_data)
     check_sr = tf.assert_equal(sr, SAMPLE_RATE)
 
     check_channels = tf.assert_equal(tf.shape(waveform)[1],1)
@@ -39,9 +44,9 @@ def feature_extraction(clip,audio_path,hparams):
         waveform = tf.squeeze(waveform)
     
 
-    window_size = hparams.window_size
-    hop_size = hparams.hop_size
-    fft_length = hparams.fft_length
+    window_size = int(round(SAMPLE_RATE*hparams.stft_window_seconds))
+    hop_size = int(round(SAMPLE_RATE*hparams.stft_hop_seconds))
+    fft_length = 2**int(np.ceil(np.log(window_size)/np.log(2.0)))
     magnitude_spectrogram = tf.abs(tf.contrib.signal.stft(signals=waveform,
                             frame_length=window_size,
                             frame_step=hop_size,
@@ -68,6 +73,7 @@ def feature_extraction(clip,audio_path,hparams):
             axis=0)
     return features
 
+
 def label_data(model_path,csv_file,audio_path):
     """
     Label the data using a particular model and save the softmax values.
@@ -88,7 +94,9 @@ def label_data(model_path,csv_file,audio_path):
         saver = model.build_graph(pcm)
 
     probs = []
-    temp = {}
+    temp = np.zeros((len(file_names),41))
+    print(temp.shape)
+    #temp = {}
     with tf.Session(graph=graph) as sess:
         saver.restore(sess,model_path)
         print(len(file_names)) 
@@ -99,56 +107,65 @@ def label_data(model_path,csv_file,audio_path):
             if(l.ndim !=1):
                 l = np.mean(l,axis=0)
 
-            temp[file_names[i]] = l
+            temp[i,:] = l 
+     #       temp[file_names[i]] = l
             print(i)
-        print(temp)
+     #   print(temp)
 
-    file = open('label_data','wb')
-
-    pickle.dump(temp,file)
-    file.close()
+    #file = open('label_data','wb')
+    np.save('labels.npy',temp)
+    #pickle.dump(temp,file)
+    #file.close()
 
 
             
     return
-def get_data(csv_record,audio_path,hparams):
-    [clip,_] = tf.decode_csv(csv_record,record_defaults=[[''],[''],[0]])
+def get_data(csv_record,audio_path,hparams,label_index_table,label_data):
+    [clip,temp,_,_,_] = tf.decode_csv(csv_record,record_defaults=[[''],[''],[''],[''],['']])
 
     features = feature_extraction(clip,audio_path,hparams)
-
-    label = data[clip] 
-    num_examples = tf.shape(features)[0]
-    labels = tf.tile([labels],[num_examples, 1])
     
-    return
+    label_ind = label_index_table.lookup(clip)
+    label_data = tf.convert_to_tensor(label_data)
+    label = label_data[label_ind,:]
+    num_examples = tf.shape(features)[0]
+    labels = tf.tile([label],[num_examples,1])
+    #label = np.ones(41)
+    return features,labels
 
+def load_data(csv_file):
+    label_data_table=tf.contrib.lookup.HashTable(tf.contrib.lookup.TextFileInitializer(
+            csv_file, tf.string, 0,tf.int64, tf.contrib.lookup.TextFileIndex.LINE_NUMBER, delimiter=","), -1)
+    return label_data_table
 def dataset_iterator(csv_file,audio_path,hparams):
     """
     Create an iterator for the training process
     """
-    dataset = tf.data.TextLineDataset(csv_file)
+    label_index_table = load_data(csv_file)
+    label_data = np.load('labels.npy')
+    print(label_data.shape)
+    num_classes=41
+    dataset = tf.data.TextLineDataset(csv_file).skip(1)
 
-    dataset.skip(1)
+    dataset = dataset.shuffle(buffer_size=10000)
 
-    dataset.shuffle(buffer_size=10000)
 
-    dataset = dataset.map(
-            map_func=functools.partial(get_data,
-                    clip_dir=audio_path,
+    dataset = dataset.map(map_func=functools.partial(get_data,
+                    audio_path=audio_path,
                     hparams=hparams,
-                    num_classes=num_classes),
-            num_parallel_calls=2)
-    dataset.apply(tf.contrib.data.unbatch())
-    dataset = dataset.shuffle(buffer_size=20000)
+                    label_index_table=label_index_table,
+                    label_data=label_data))
+    
+    dataset = dataset.apply(tf.contrib.data.unbatch())
+    dataset = dataset.shuffle(buffer_size=1000)
     dataset = dataset.repeat(5)
-    dataset.apply(tf.contrib.data.batch_drop_remainder(batch_size=hparams.batch_size))
+    dataset = dataset.batch(32)
 
     dataset = dataset.prefetch(10)
-
     iterator = dataset.make_initializable_iterator()
-    features,lables = iterator.get_next()
+    features,label = iterator.get_next()
 
-    return features, labels, num_classes, iterator.initializer
+    return features,label, num_classes, iterator.initializer
 
     
     return
