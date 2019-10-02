@@ -1,8 +1,11 @@
 import tensorflow as tf
 import numpy as np
+import argparse
+import pandas as pd
 
+import model
 import carlini_wagner_attack as CW
-
+import utils_tf
 
 
 def parse_flags():
@@ -46,21 +49,21 @@ def main():
     num_classes=41
     df = pd.read_csv(flags.infer_csv_file)
     file_names = df.iloc[:,0].values
-
-
-    graph_substitute = tf.Graph()
-    graph_target = tf.Graph()
-
-    with graph_substitute.as_default() and tf.Session(graph=graph_substitute) as sess:
-        substitute = model.BaselineCNN(hparams,num_classes)
+    labels = df.iloc[:,1].values
+    print(hparams)
+    with tf.Graph().as_default() and tf.Session() as sess:
+        substitute_model = model.BaselineCNN(hparams,num_classes)
         cw = CW.CarliniWagnerAttack(model=substitute_model,save_model_dir=flags.save_model_dir,sess=sess,hparams=hparams)
         cw.build_attack()
 
-        for i in range(10):
+        for i in range(1):
             data,_ = utils_tf._preprocess_data(flags.infer_audio_dir,file_names[i])
+            lab = utils_tf._convert_label_name_to_label(labels[i])
+            print(data.shape)
+            audio,preds,snr = cw.attack(data,lab)
+     
+    
 
-            audio,preds,snr = cw.attack(data)
-      
 
 if __name__=="__main__":
     main()
