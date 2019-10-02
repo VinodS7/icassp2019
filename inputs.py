@@ -30,7 +30,7 @@ flags.DEFINE_string('train_audio_dir',None,'Path to the FSDKaggle2018 dataset')
 
 
 SAMPLE_RATE=44100
-def feature_extraction(clip,train_audio_dir,hparams):
+def get_waveform(clip,train_audio_dir,hparams):
     """
     Extract features from a wavfile
     """
@@ -43,7 +43,9 @@ def feature_extraction(clip,train_audio_dir,hparams):
     with tf.control_dependencies([tf.group(check_sr, check_channels)]):
         waveform = tf.squeeze(waveform)
     
-
+    return waveform
+def compute_features(waveform,hparams):
+    SAMPLE_RATE=44100
     window_size = int(round(SAMPLE_RATE*hparams.stft_window_seconds))
     hop_size = int(round(SAMPLE_RATE*hparams.stft_hop_seconds))
     fft_length = 2**int(np.ceil(np.log(window_size)/np.log(2.0)))
@@ -122,8 +124,9 @@ def label_data(model_path,train_csv_file,train_audio_dir):
     return
 def get_data(csv_record,train_audio_dir,hparams,label_index_table,label_data):
     [clip,temp,_,_,_] = tf.decode_csv(csv_record,record_defaults=[[''],[''],[''],[''],['']])
-
-    features = feature_extraction(clip,train_audio_dir,hparams)
+    
+    waveform = get_waveform(clip,train_audio_dir,hparams)
+    features = feature_extraction(waveform,hparams)
     
     label_ind = label_index_table.lookup(clip)
     label_data = tf.convert_to_tensor(label_data)
