@@ -18,7 +18,6 @@ class CarliniWagnerAttack():
         self.save_model_dir = save_model_dir
         self.sess = sess
         self.model = model
-        self.hparams.targeted=False
         return
 
     def build_attack(self):
@@ -34,11 +33,11 @@ class CarliniWagnerAttack():
         #Delta is the perturbation to be added to the input to create ther adversarial attack
         self.delta = delta =  tf.Variable(tf.zeros(shape=self.delta_shape),validate_shape=False,name='qq_delta')
         
-
-        self.labels = tf.placeholder(tf.int32,name='labels')
+        self.mask = tf.Variable(tf.zeros(shape=self.delta_shape),validate_shape=False,name='qq_mask')
+        self.labels = tf.placeholder(tf.int32,name='qq_labels')
         self.const = tf.Variable(hparams.const,name='qq_const')
         
-        self.apply_delta = tf.clip_by_value(delta,-1.0,1.0)
+        self.apply_delta = tf.clip_by_value(delta,-1.0,1.0)*self.mask
 
         self.original = tf.Variable(tf.zeros(shape=self.delta_shape),validate_shape=False,name='qq_original')
         self.new_input = new_input = self.apply_delta + self.original
@@ -52,12 +51,12 @@ class CarliniWagnerAttack():
         saver.restore(self.sess,self.save_model_dir)
 
         self.l2dist = tf.reduce_mean(tf.square(self.new_input-self.original))
-        
-        self.labels = tf.one_hot(self.labels,41)
-        
-        self.labels = tf.cast(self.labels,tf.float32)
-        real = tf.reduce_sum((self.labels)*self.output,1)
-        other = tf.reduce_max((1-self.labels)*self.output-self.labels*10000,1)
+        self.label = tf.one_hot(self.labels,41)
+        num_examples = tf.shape(features)[0]
+        self.label = tf.tile([self.label],[num_examples, 1])
+        self.label = tf.cast(self.label,tf.float32)
+        self.real = real = tf.reduce_sum((self.label)*self.output,1)
+        self.other = other = tf.reduce_max((1-self.label)*self.output-self.label*10000,1)
         if hparams.targeted:
             loss1 = tf.maximum(0.,other-real+hparams.confidence)
         else:
@@ -77,14 +76,17 @@ class CarliniWagnerAttack():
     
    
     def attack(self,input_audio,labels,is_first=True,offset=10):
-        
         #Initialize all variables. Load session for simplicity
         hparams = self.hparams
         sess = self.sess
         audio_shape = input_audio.shape #Need input audio shape to initialize variables
-        sess.run([self.init,tf.variables_initializer([self.const,self.original,self.delta])],feed_dict={self.delta_shape:audio_shape})
+        sess.run([self.init,tf.variables_initializer([self.const,self.original,self.delta,self.mask])],feed_dict={self.delta_shape:audio_shape})
         sess.run(self.original.assign(input_audio))
-        
+        mask = np.zeros(audio_shape)
+        ind = np.argwhere(input_audio>1e-5)
+        mask[ind] = 1
+        print(mask)
+        sess.run(self.mask.assign(mask))
         sess.run(tf.variables_initializer(self.optimizer.variables()),feed_dict={self.delta_shape:input_audio.shape})
         
         final_delta = [None]
@@ -94,7 +96,7 @@ class CarliniWagnerAttack():
         i = 0
         while(True):
             now = time.time()
-            l1,l2,l,op=sess.run([self.loss1,self.loss2,self.loss,self.probs],feed_dict={self.labels:labels}) 
+            l1,l2,l,op=sess.run([self.real,self.loss2,self.other,self.probs],feed_dict={'qq_labels:0':labels}) 
             sig = np.mean(np.square(input_audio))
             l2 = np.squeeze(l2)
             l2 = 10*np.log10(sig/l2)
@@ -103,20 +105,20 @@ class CarliniWagnerAttack():
             
             if(op.ndim!=1):
                 op = np.mean(op,axis=0)
-            print(l2,np.argmax(op),np.max(op),labels,op[labels])
+            print(l2,np.argmax(op),np.max(op),labels,op[labels],'\r')
             if(hparams.targeted):
-                if(np.argmax(op) == labels and l2>25):
+                if(np.argmax(op) == labels and op[labels]>0.6):
                     snr = l2
                     ad = sess.run([self.new_input])
                     ad = np.squeeze(ad)
                     return ad,op,snr
             else:
-                if(np.argmax(op) != labels):
+                if(np.argmax(op) != labels and op[labels]<0.05):
                     snr=l2
-                    ad = sess.run([self.input])
+                    ad = sess.run([self.new_input])
                     ad = np.squeeze(ad)
                     return ad,op,snr
-            sess.run([self.train],feed_dict={self.labels:labels})
+            sess.run([self.train],feed_dict={'qq_labels:0':labels})
         return input_audio
 
 

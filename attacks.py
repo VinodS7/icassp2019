@@ -1,17 +1,23 @@
+import os
+import subprocess
+
 import tensorflow as tf
 import numpy as np
 import argparse
 import pandas as pd
+import scipy.io.wavfile as wav
 
 import model
 import carlini_wagner_attack as CW
 import utils_tf
-
+import inputs
 
 def parse_flags():
     parser = argparse.ArgumentParser(description='Parser for inference and evaluation')
     parser.add_argument('--infer_csv_file',type=str,default='',
             help='Path to csv file containing names of files')
+    parser.add_argument('--write_audio_dir',type=str,default='',
+            help='Path to write adversarial audio files')
     parser.add_argument('--infer_audio_dir',type=str,default='',
             help='Path to audio directory containing audio files')
     parser.add_argument('--save_model_dir',type=str,default='',
@@ -56,13 +62,30 @@ def main():
         cw = CW.CarliniWagnerAttack(model=substitute_model,save_model_dir=flags.save_model_dir,sess=sess,hparams=hparams)
         cw.build_attack()
 
-        for i in range(1):
-            data,_ = utils_tf._preprocess_data(flags.infer_audio_dir,file_names[i])
+        for i in range(20):
+            call = ['ffmpeg','-v','quiet','-i',os.path.join(flags.infer_audio_dir,file_names[i]),'-f','f32le',
+                    '-ar',str(44100),'-ac','1','pipe:1']
+            samples = subprocess.check_output(call)
+            data = np.frombuffer(samples, dtype=np.float32)
+                            
             lab = utils_tf._convert_label_name_to_label(labels[i])
             print(data.shape)
-            audio,preds,snr = cw.attack(data,lab)
-     
-    
+            
+            if(hparams.targeted):
+                set_target=False
+
+                while(not set_target):
+                    target_label = np.random.randint(41)
+                    if(lab != target_label):
+                        set_target=True
+            else:
+                target_label = lab
+            
+
+            audio,preds,snr = cw.attack(data,target_label)
+            print(audio.shape,data.shape)
+            wav.write(os.path.join(flags.write_audio_dir,file_names[i]),44100,audio) 
+            wav.write(os.path.join(flags.write_audio_dir,'orig-'+file_names[i]),44100,data) 
 
 
 if __name__=="__main__":
