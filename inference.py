@@ -1,3 +1,6 @@
+import os
+import subprocess
+
 import tensorflow as tf
 import numpy as np
 import pandas as pd
@@ -20,14 +23,6 @@ def parse_flags():
     flags=parser.parse_args()
     return flags
 
-def gen_features(file_name,train_audio_dir,hparams):
-    """
-    function to generate predictions for individual audio files
-    """
-
-    features = inputs.feature_extraction(file_name,train_audio_dir,hparams)
-    
-    return features
 
 def parse_hparams(flag_hparams):
     hparams = tf.contrib.training.HParams(
@@ -55,9 +50,9 @@ def main():
     
     with tf.Graph().as_default():
         substitute = model.BaselineCNN(hparams,num_classes)
-        file_name = tf.placeholder(tf.string)
+        audio_input = tf.placeholder(tf.float32,shape=[None],name='audio_input')
         start_vars = set(x.name for x in tf.global_variables())
-        features = gen_features(file_name,flags.infer_audio_dir,hparams)
+        features = inputs.compute_features(audio_input,hparams)
         preds = substitute.get_probs(features) 
         end_vars = tf.global_variables()
         model_vars = [x for x in end_vars if x.name not in start_vars]
@@ -66,8 +61,12 @@ def main():
         with tf.Session() as sess:
             saver.restore(sess=sess,save_path=flags.save_model_dir)
              
-            for i in range(len(file_names)):
-                pr = sess.run([preds],feed_dict={file_name:file_names[i]})
+            for i in range(20):
+                call = ['ffmpeg','-v','quiet','-i',os.path.join(flags.infer_audio_dir,file_names[i]),'-f','f32le','-ar',str(44100),'-ac','1','pipe:1']
+                samples = subprocess.check_output(call)
+                waveform = np.frombuffer(samples, dtype=np.float32)
+    
+                pr = sess.run([preds],feed_dict={audio_input:waveform})
                 pr = np.squeeze(pr)
                 if(pr.ndim != 1):
                     pr = np.mean(pr,axis=0)
