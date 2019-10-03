@@ -115,7 +115,7 @@ def label_data(model_path,train_csv_file,train_audio_dir):
      #   print(temp)
 
     #file = open('label_data','wb')
-    np.save('labels.npy',temp)
+    #np.save('labels.npy',temp)
     #pickle.dump(temp,file)
     #file.close()
 
