@@ -102,16 +102,18 @@ class CarliniWagnerAttack():
             l2 = 10*np.log10(sig/l2)
             l1 = np.squeeze(l1)
             op = np.squeeze(op)
-            
+        
             if(op.ndim!=1):
                 op = np.mean(op,axis=0)
+            if(i==0):
+                op_orig = op
             print(l2,np.argmax(op),np.max(op),labels,op[labels],'\r')
             if(hparams.targeted):
                 if(np.argmax(op) == labels and op[labels]>0.6):
                     snr = l2
                     ad = sess.run([self.new_input])
                     ad = np.squeeze(ad)
-                    return ad,op,snr
+                    return ad,op,op_orig,snr
             else:
                 if(np.argmax(op) != labels and op[labels]<0.05):
                     snr=l2
@@ -119,6 +121,7 @@ class CarliniWagnerAttack():
                     ad = np.squeeze(ad)
                     return ad,op,snr
             sess.run([self.train],feed_dict={'qq_labels:0':labels})
+            i+=1
         return input_audio
 
 

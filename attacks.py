@@ -1,5 +1,6 @@
 import os
 import subprocess
+import time
 
 import tensorflow as tf
 import numpy as np
@@ -56,13 +57,21 @@ def main():
     df = pd.read_csv(flags.infer_csv_file)
     file_names = df.iloc[:,0].values
     labels = df.iloc[:,1].values
-    print(hparams)
+    
+    gt = []
+    orig_label = []
+    adv_label = []
+    orig_pred = []
+    adv_pred = []
+    snr = []
+    files = []
     with tf.Graph().as_default() and tf.Session() as sess:
         substitute_model = model.BaselineCNN(hparams,num_classes)
         cw = CW.CarliniWagnerAttack(model=substitute_model,save_model_dir=flags.save_model_dir,sess=sess,hparams=hparams)
         cw.build_attack()
 
-        for i in range(20):
+        for i in range(444410):
+            start_time=time.time()
             call = ['ffmpeg','-v','quiet','-i',os.path.join(flags.infer_audio_dir,file_names[i]),'-f','f32le',
                     '-ar',str(44100),'-ac','1','pipe:1']
             samples = subprocess.check_output(call)
@@ -81,12 +90,22 @@ def main():
             else:
                 target_label = lab
             
+            audio,pred,pred_orig,noise = cw.attack(data,target_label)
+        
+            print('TIME IN SECONDS!',time.time()-start_time)
+            gt.append(lab)
+            orig_label.append(np.argmax(pred_orig))
+            orig_pred.append(np.max(pred_orig))
+            adv_label.append(np.argmax(pred))
+            adv_pred.append(np.max(pred))
+            snr.append(noise)
+            files.append(file_names[i])
 
-            audio,preds,snr = cw.attack(data,target_label)
-            print(audio.shape,data.shape)
             wav.write(os.path.join(flags.write_audio_dir,file_names[i]),44100,audio) 
-            wav.write(os.path.join(flags.write_audio_dir,'orig-'+file_names[i]),44100,data) 
-
+        
+        df_out = pd.DataFrame({'fname':files,'gt':gt,'original_label':orig_label,'original_pred':
+            orig_pred,'adv_label':adv_label,'adv_pred':adv_pred,'snr':snr})
+        df_out.to_csv('adv_data.csv',index=False)
 
 if __name__=="__main__":
     main()
