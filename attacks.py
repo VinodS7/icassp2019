@@ -42,6 +42,7 @@ def parse_hparams(flag_hparams):
             weights_init_stddev=1e-3,
             learning_rate=5e-4,
             confidence=0,
+            max_iterations=5000,
             const=1e-2,
             targeted=True)
 
@@ -65,12 +66,13 @@ def main():
     adv_pred = []
     snr = []
     files = []
+    t = []
     with tf.Graph().as_default() and tf.Session() as sess:
         substitute_model = model.BaselineCNN(hparams,num_classes)
         cw = CW.CarliniWagnerAttack(model=substitute_model,save_model_dir=flags.save_model_dir,sess=sess,hparams=hparams)
         cw.build_attack()
 
-        for i in range(444410):
+        for i in range(len(file_names)):
             start_time=time.time()
             call = ['ffmpeg','-v','quiet','-i',os.path.join(flags.infer_audio_dir,file_names[i]),'-f','f32le',
                     '-ar',str(44100),'-ac','1','pipe:1']
@@ -91,7 +93,9 @@ def main():
                 target_label = lab
             
             audio,pred,pred_orig,noise = cw.attack(data,target_label)
-        
+            
+            if(audio is None):
+                continue
             print('TIME IN SECONDS!',time.time()-start_time)
             gt.append(lab)
             orig_label.append(np.argmax(pred_orig))
@@ -100,11 +104,11 @@ def main():
             adv_pred.append(np.max(pred))
             snr.append(noise)
             files.append(file_names[i])
-
+            t.append(time.time()-start_time)
             wav.write(os.path.join(flags.write_audio_dir,file_names[i]),44100,audio) 
         
         df_out = pd.DataFrame({'fname':files,'gt':gt,'original_label':orig_label,'original_pred':
-            orig_pred,'adv_label':adv_label,'adv_pred':adv_pred,'snr':snr})
+            orig_pred,'adv_label':adv_label,'adv_pred':adv_pred,'snr':snr,'time':t})
         df_out.to_csv('adv_data.csv',index=False)
 
 if __name__=="__main__":

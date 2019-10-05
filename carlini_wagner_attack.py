@@ -92,33 +92,40 @@ class CarliniWagnerAttack():
         final_delta = [None]
 
         #now = time.time()
-        #MAX = self.max_iterations
+        MAX = hparams.max_iterations
         i = 0
         while(True):
             now = time.time()
-            l1,l2,l,op=sess.run([self.real,self.loss2,self.other,self.probs],feed_dict={'qq_labels:0':labels}) 
+            l1,l2,l,op,ad=sess.run([self.real,self.loss2,self.other,self.probs,self.new_input],feed_dict={'qq_labels:0':labels}) 
             sig = np.mean(np.square(input_audio))
             l2 = np.squeeze(l2)
             l2 = 10*np.log10(sig/l2)
             l1 = np.squeeze(l1)
             op = np.squeeze(op)
-        
+            ad = np.squeeze(ad) 
             if(op.ndim!=1):
                 op = np.mean(op,axis=0)
             if(i==0):
                 op_orig = op
+            elif(i==MAX or l2<15):
+                if(hparams.targeted):
+                    if(np.argmax(op) == labels):
+                        return ad,op,op_orig,l2
+                    else:
+                        return None,None,None,None
+                else:
+                    if(np.argmax(op)!=labels):
+                        return ad,op,op_orig,l2
+                    else:
+                        return None,None,None,None
             print(l2,np.argmax(op),np.max(op),labels,op[labels],'\r')
             if(hparams.targeted):
                 if(np.argmax(op) == labels and op[labels]>0.6):
                     snr = l2
-                    ad = sess.run([self.new_input])
-                    ad = np.squeeze(ad)
                     return ad,op,op_orig,snr
             else:
                 if(np.argmax(op) != labels and op[labels]<0.05):
                     snr=l2
-                    ad = sess.run([self.new_input])
-                    ad = np.squeeze(ad)
                     return ad,op,snr
             sess.run([self.train],feed_dict={'qq_labels:0':labels})
             i+=1
