@@ -15,6 +15,7 @@ import config as cfg
 from cleverhans_wrapper import CleverHansModel
 from tensorflow.contrib.framework.python.ops import audio_ops as tf_audio
 from tensorflow.python import autograph as ag
+from tensorflow.contrib import ffmpeg
 """
 1. Extract features from audio files that are given by an input csv file. 
 2. Create labels for training using the target model 
@@ -36,14 +37,39 @@ def get_waveform(clip,train_audio_dir,hparams):
     """
     clip_path = tf.string_join([train_audio_dir,clip], separator=os.sep)
     clip_data = tf.read_file(clip_path)
-    waveform,sr = tf_audio.decode_wav(clip_data)
-    check_sr = tf.assert_equal(sr, SAMPLE_RATE)
+    waveform = ffmpeg.decode_audio(clip_data,file_format='wav',samples_per_second=hparams.sample_rate,channel_count=1)
+    #check_sr = tf.assert_equal(sr, SAMPLE_RATE)
 
     check_channels = tf.assert_equal(tf.shape(waveform)[1],1)
-    with tf.control_dependencies([tf.group(check_sr, check_channels)]):
+    with tf.control_dependencies([tf.group(check_channels)]):
         waveform = tf.squeeze(waveform)
     
     return waveform
+
+def compute_vgg13_features(waveform,generator,mel_filt,hparams):
+    sample_rate=hparams.sample_rate
+    mel_filt = tf.convert_to_tensor(mel_filt) 
+    stfts = tf.contrib.signal.stft(waveform, frame_length=1024, frame_step=512,
+                                           fft_length=1024,pad_end=True)
+    spectrograms = tf.abs(stfts)
+
+        # Warp the linear scale spectrograms into the mel-scale.
+    num_spectrogram_bins = stfts.shape[-1].value
+    mel_spectrograms = tf.tensordot(tf.pow(spectrograms,2), mel_filt, 1)
+    mel_spectrograms.set_shape(spectrograms.shape[:-1].concatenate(
+        mel_filt.shape[-1:]))
+
+    max_val = tf.reduce_max(mel_spectrograms,axis=None)
+
+
+        # Compute a stabilized log to get log-magnitude mel-scale spectrograms.
+    log_mel_spectrograms = 10*((tf.log(mel_spectrograms + 1e-6)-tf.log(max_val+1e-6))/tf.log(tf.constant(10,dtype=tf.float32)))
+    log_mel_spectrograms = tf.contrib.signal.frame(log_mel_spectrograms,128,128,axis=0)
+    features = generator.standardize(log_mel_spectrograms)        
+    features.set_shape(shape=[None,128,64])
+    return features
+ 
+
 def compute_features(waveform,hparams):
     SAMPLE_RATE=44100
     window_size = int(round(SAMPLE_RATE*hparams.stft_window_seconds))
@@ -122,15 +148,30 @@ def label_data(model_path,train_csv_file,train_audio_dir):
 
             
     return
+def get_vgg13_data(csv_record,train_audio_dir,generator,mel_filt,label_index_table,label_data,hparams):
+    [clip,temp,_,_,_] = tf.decode_csv(csv_record,record_defaults=[[''],[''],[''],[''],['']])
+    
+    waveform = get_waveform(clip,train_audio_dir,hparams)
+    features = compute_vgg13_features(waveform,generator,mel_filt,hparams)
+    
+    label_ind = label_index_table.lookup(clip)
+    label_data = tf.convert_to_tensor(label_data)
+    label = label_data[label_ind-1,:]
+    num_examples = tf.shape(features)[0]
+    labels = tf.tile([label],[num_examples,1])
+    #label = np.ones(41)
+    return features,labels
+
+
 def get_data(csv_record,train_audio_dir,hparams,label_index_table,label_data):
     [clip,temp,_,_,_] = tf.decode_csv(csv_record,record_defaults=[[''],[''],[''],[''],['']])
     
     waveform = get_waveform(clip,train_audio_dir,hparams)
-    features = feature_extraction(waveform,hparams)
+    features = compute_features(waveform,hparams)
     
     label_ind = label_index_table.lookup(clip)
     label_data = tf.convert_to_tensor(label_data)
-    label = label_data[label_ind,:]
+    label = label_data[label_ind-1,:]
     num_examples = tf.shape(features)[0]
     labels = tf.tile([label],[num_examples,1])
     #label = np.ones(41)
@@ -152,17 +193,29 @@ def dataset_iterator(train_csv_file,train_audio_dir,label_data_file,hparams):
 
     dataset = dataset.shuffle(buffer_size=10000)
 
-
-    dataset = dataset.map(map_func=functools.partial(get_data,
+    if(hparams.vgg13_features):
+        x,_ = utils_tf._load_dataset(cfg.to_dataset('training'))
+        generator = utils.fit_scaler(x)
+        mel_filt = librosa.filters.mel(sr=32000,n_fft=1024,n_mels=64).T
+        dataset = dataset.map(map_func=functools.partial(get_vgg13_data,
+                    train_audio_dir=train_audio_dir,
+                    hparams=hparams,
+                    label_index_table=label_index_table,
+                    label_data=label_data,
+                    generator=generator,
+                    mel_filt=mel_filt),
+                    num_parallel_calls=1)
+    else:
+        dataset = dataset.map(map_func=functools.partial(get_data,
                     train_audio_dir=train_audio_dir,
                     hparams=hparams,
                     label_index_table=label_index_table,
                     label_data=label_data))
     
     dataset = dataset.apply(tf.contrib.data.unbatch())
-    dataset = dataset.shuffle(buffer_size=1000)
-    dataset = dataset.repeat(2)
-    dataset = dataset.batch(32)
+    dataset = dataset.shuffle(buffer_size=10000)
+    dataset = dataset.repeat(6)
+    dataset = dataset.batch(hparams.batch_size)
 
     dataset = dataset.prefetch(10)
     iterator = dataset.make_initializable_iterator()
