@@ -14,7 +14,7 @@ def parse_flags():
             help='Path to csv file containing names of files')
     parser.add_argument('--train_audio_dir',type=str,default='',
             help='Path to directory containing audio files')
-    parser.add_argument('--save_model_path',type=str,default='',
+    parser.add_argument('--save_model_dir',type=str,default='',
             help='Path to directory to save model variables')
     parser.add_argument('--label_data_file',type=str,default='',
             help='Path to file containing data labeled by target model')
@@ -25,6 +25,8 @@ def parse_flags():
     return flags
 def parse_hparams(flag_hparams):
     hparams = tf.contrib.training.HParams(
+            sample_rate=44100,
+            vgg13_features=True,
             stft_window_seconds=0.025,
             stft_hop_seconds=0.010,
             mel_bands=64,
@@ -49,15 +51,15 @@ def main():
         features,labels,num_classes,input_init=inputs.dataset_iterator(flags.train_csv_file,flags.train_audio_dir,flags.label_data_file,hparams)
         global_step,loss,train_op = substitute.train(features,labels)
         saver = tf.train.Saver()
-        saver_hook = tf.train.CheckpointSaverHook(save_steps=250,checkpoint_dir=flags.save_model_path,saver=saver)
+        saver_hook = tf.train.CheckpointSaverHook(save_steps=250,checkpoint_dir=flags.save_model_dir,saver=saver)
         summary_op = tf.summary.merge_all()
-        summary_hook = tf.train.SummarySaverHook(save_steps=500,output_dir=flags.save_model_path,summary_op=summary_op)
+        summary_hook = tf.train.SummarySaverHook(save_steps=500,output_dir=flags.save_model_dir,summary_op=summary_op)
 
 
 
 
         with tf.train.SingularMonitoredSession(hooks=[saver_hook,summary_hook],
-                                            checkpoint_dir=flags.save_model_path) as sess:
+                                            checkpoint_dir=flags.save_model_dir) as sess:
             sess.raw_session().run(input_init)
 
             while not sess.should_stop():
