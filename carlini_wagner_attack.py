@@ -41,12 +41,17 @@ class CarliniWagnerAttack():
 
         self.original = tf.Variable(tf.zeros(shape=self.delta_shape),validate_shape=False,name='qq_original')
         self.new_input = new_input = self.apply_delta + self.original
-        features = inputs.compute_features(self.new_input,hparams)
-         
-        features.set_shape([None,25,64]) 
+        if(hparams.vgg13_features):
+            features = inputs.compute_vgg13_features(self.new_input,hparams)
+        else:
+            features = inputs.compute_features(self.new_input,hparams)
+            features.set_shape([None,25,64]) 
+        start_model_vars = set(x.name for x in tf.global_variables())
         self.output = self.model.get_logits(features)
+        end_model_vars = tf.global_variables()
+        model_vars = [x for x in end_model_vars if x.name not in start_model_vars]
         self.probs = tf.nn.softmax(self.output)
-        saver = tf.train.Saver([x for x in tf.global_variables() if 'qq' not in x.name])
+        saver = tf.train.Saver(var_list=model_vars)
 
         saver.restore(self.sess,self.save_model_dir)
 
@@ -82,9 +87,9 @@ class CarliniWagnerAttack():
         audio_shape = input_audio.shape #Need input audio shape to initialize variables
         sess.run([self.init,tf.variables_initializer([self.const,self.original,self.delta,self.mask])],feed_dict={self.delta_shape:audio_shape})
         sess.run(self.original.assign(input_audio))
-        mask = np.zeros(audio_shape)
-        ind = np.argwhere(input_audio>1e-5)
-        mask[ind] = 1
+        mask = np.ones(audio_shape)
+        #ind = np.argwhere(input_audio)
+        #mask[ind] = 1
         print(mask)
         sess.run(self.mask.assign(mask))
         sess.run(tf.variables_initializer(self.optimizer.variables()),feed_dict={self.delta_shape:input_audio.shape})
@@ -107,7 +112,7 @@ class CarliniWagnerAttack():
                 op = np.mean(op,axis=0)
             if(i==0):
                 op_orig = op
-            elif(i==MAX or l2<15):
+            elif(i==MAX or l2<20):
                 if(hparams.targeted):
                     if(np.argmax(op) == labels):
                         return ad,op,op_orig,l2
@@ -120,7 +125,7 @@ class CarliniWagnerAttack():
                         return None,None,None,None
             print(l2,np.argmax(op),np.max(op),labels,op[labels],'\r')
             if(hparams.targeted):
-                if(np.argmax(op) == labels and op[labels]>0.6):
+                if(np.argmax(op) == labels and op[labels]>0.9):
                     snr = l2
                     return ad,op,op_orig,snr
             else:

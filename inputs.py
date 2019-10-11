@@ -37,16 +37,20 @@ def get_waveform(clip,train_audio_dir,hparams):
     """
     clip_path = tf.string_join([train_audio_dir,clip], separator=os.sep)
     clip_data = tf.read_file(clip_path)
-    waveform = ffmpeg.decode_audio(clip_data,file_format='wav',samples_per_second=hparams.sample_rate,channel_count=1)
-    #check_sr = tf.assert_equal(sr, SAMPLE_RATE)
+    waveform,sr = tf_audio.decode_wav(clip_data)
+    check_sr = tf.assert_equal(sr, hparams.sample_rate)
 
     check_channels = tf.assert_equal(tf.shape(waveform)[1],1)
-    with tf.control_dependencies([tf.group(check_channels)]):
+    with tf.control_dependencies([tf.group(check_sr,check_channels)]):
         waveform = tf.squeeze(waveform)
     
     return waveform
 
-def compute_vgg13_features(waveform,generator,mel_filt,hparams):
+def compute_vgg13_features(waveform,hparams):
+    x,_ = utils_tf._load_dataset(cfg.to_dataset('training'))
+    generator = utils.fit_scaler(x)
+    mel_filt = librosa.filters.mel(sr=32000,n_fft=1024,n_mels=64).T
+    
     sample_rate=hparams.sample_rate
     mel_filt = tf.convert_to_tensor(mel_filt) 
     stfts = tf.contrib.signal.stft(waveform, frame_length=1024, frame_step=512,
@@ -64,7 +68,7 @@ def compute_vgg13_features(waveform,generator,mel_filt,hparams):
 
         # Compute a stabilized log to get log-magnitude mel-scale spectrograms.
     log_mel_spectrograms = 10*((tf.log(mel_spectrograms + 1e-6)-tf.log(max_val+1e-6))/tf.log(tf.constant(10,dtype=tf.float32)))
-    log_mel_spectrograms = tf.contrib.signal.frame(log_mel_spectrograms,128,128,axis=0)
+    log_mel_spectrograms = tf.contrib.signal.frame(log_mel_spectrograms,128,128,axis=0,pad_end=True)
     features = generator.standardize(log_mel_spectrograms)        
     features.set_shape(shape=[None,128,64])
     return features
@@ -204,7 +208,7 @@ def dataset_iterator(train_csv_file,train_audio_dir,label_data_file,hparams):
                     label_data=label_data,
                     generator=generator,
                     mel_filt=mel_filt),
-                    num_parallel_calls=1)
+                    num_parallel_calls=6)
     else:
         dataset = dataset.map(map_func=functools.partial(get_data,
                     train_audio_dir=train_audio_dir,

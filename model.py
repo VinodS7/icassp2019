@@ -51,3 +51,81 @@ class BaselineCNN(Model):
         train_op = optimizer.minimize(loss,global_step=global_step)
 
         return global_step,loss,train_op
+
+class vgg13(Model):
+    def __init__(self,hparams,num_classes):
+        self.hparams = hparams
+        self.num_classes=num_classes
+        return
+    
+    def fprop(self,features):
+        hparams = self.hparams
+        x = tf.expand_dims(features,axis=3)
+        
+        x = tf.keras.layers.Conv2D(64, kernel_size=(3,3),padding='same',activation='relu',name='conv2d_1')(x)
+        x = tf.keras.layers.BatchNormalization(axis=-1,name='batch_normalization_1')(x)
+        
+        x = tf.keras.layers.Conv2D(64, kernel_size=(3,3),padding='same',activation='relu',name='conv2d_2')(x)
+        x = tf.keras.layers.BatchNormalization(axis=-1,name='batch_normalization_2')(x)
+ 
+        x = tf.keras.layers.MaxPooling2D(pool_size=(2,2))(x)
+        
+        x = tf.keras.layers.Conv2D(128, kernel_size=(3,3),padding='same',activation='relu',name='conv2d_3')(x)
+        x = tf.keras.layers.BatchNormalization(axis=-1,name='batch_normalization_3')(x)
+        
+        x = tf.keras.layers.Conv2D(128, kernel_size=(3,3),padding='same',activation='relu',name='conv2d_4')(x)
+        x = tf.keras.layers.BatchNormalization(axis=-1,name='batch_normalization_4')(x)
+ 
+        x = tf.keras.layers.MaxPooling2D(pool_size=(2,2))(x)
+        
+        x = tf.keras.layers.Conv2D(256, kernel_size=(3,3),padding='same',activation='relu',name='conv2d_5')(x)
+        x = tf.keras.layers.BatchNormalization(axis=-1,name='batch_normalization_5')(x)
+        
+        x = tf.keras.layers.Conv2D(256, kernel_size=(3,3),padding='same',activation='relu',name='conv2d_6')(x)
+        x = tf.keras.layers.BatchNormalization(axis=-1,name='batch_normalization_6')(x)
+ 
+        x = tf.keras.layers.MaxPooling2D(pool_size=(2,2))(x)
+
+        x = tf.keras.layers.Conv2D(512, kernel_size=(3,3),padding='same',activation='relu',name='conv2d_7')(x)
+        x = tf.keras.layers.BatchNormalization(axis=-1,name='batch_normalization_7')(x)
+        
+        x = tf.keras.layers.Conv2D(512, kernel_size=(3,3),padding='same',activation='relu',name='conv2d_8')(x)
+        x = tf.keras.layers.BatchNormalization(axis=-1,name='batch_normalization_8')(x)
+ 
+        x = tf.keras.layers.MaxPooling2D(pool_size=(2,2))(x)
+
+        x = tf.keras.layers.Conv2D(512, kernel_size=(3,3),padding='same',activation='relu',name='conv2d_9')(x)
+        x = tf.keras.layers.BatchNormalization(axis=-1,name='batch_normalization_9')(x)
+        
+        x = tf.keras.layers.Conv2D(512, kernel_size=(3,3),padding='same',activation='relu',name='conv2d_10')(x)
+        x = tf.keras.layers.BatchNormalization(axis=-1,name='batch_normalization_10')(x)
+ 
+        x = tf.keras.layers.MaxPooling2D(pool_size=(2,2))(x)
+
+
+        x = tf.keras.layers.GlobalAveragePooling2D()(x)
+        x = tf.keras.layers.Dense(self.num_classes,name='dense_1')(x)
+        return {self.O_LOGITS: x,
+                self.O_PROBS: tf.nn.softmax(x)}
+
+
+
+
+    def _conv_block(self,x,n_filters, kernel_size=(3,3),pool_size=(2,2), **kwargs):
+        x = self._conv_bn(x, n_filters, kernel_size, **kwargs)
+        x = self._conv_bn(x, n_filters, kernel_size, **kwargs)
+        return tf.keras.layers.MaxPooling2D(pool_size=pool_size)(x)
+
+    def _conv_bn(self,x, n_filters, kernel_size=(3,3), **kwargs):
+        x = tf.keras.layers.Conv2D(n_filters,
+                kernel_size=kernel_size,
+                padding='same',
+                activation='relu',
+                **kwargs)(x)
+        return tf.keras.layers.BatchNormalization(axis=-1)(x)
+
+
+
+
+
+
